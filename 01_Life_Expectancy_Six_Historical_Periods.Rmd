@@ -1,0 +1,233 @@
+---
+title: "How life expectancy has changed across continents and worldwide"
+subtitle: "Version 1 — Descriptive analysis | 1952–2025"
+lang: en
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+# A short figure path avoids very long Windows filenames during Knit.
+knitr::opts_chunk$set(
+  echo = TRUE, message = FALSE, warning = FALSE,
+  fig.width = 10.5, fig.height = 5.6, fig.align = "center",
+  fig.path = "fig/", dev = "png", dpi = 110, fig.retina = 1
+)
+
+# Check that the current project folder can store graphics.
+dir.create("fig", recursive = TRUE, showWarnings = FALSE)
+write_test <- file.path("fig", "test_write.tmp")
+if (!file.create(write_test)) {
+  stop("The 'fig' folder is not writable. Move the project to C:/R/gapminder or choose a writable folder.")
+}
+unlink(write_test)
+```
+
+# Context and data import
+
+
+We are examining how average life expectancy has changed on each continent and worldwide. We are expanding the scope of the original study of **Gapminder** sample to cover **every year from 1952 to 2025**, keeping the **142 countries and the same six columns**. 
+
+The accompanying script shows how we have combined time series of life expectancy, population, and GDP per capita
+
+```{r data-import}
+library(tidyverse)
+
+if (file.exists("gapminder_1952_2025.rds")) {
+  gapminder <- readRDS("gapminder_1952_2025.rds")
+} else if (file.exists("gapminder_1952_2025.csv")) {
+  gapminder <- readr::read_csv("gapminder_1952_2025.csv", show_col_types = FALSE)
+} else {
+  source("carica_gapminder_1952_2025.R", local = knitr::knit_global())
+}
+
+stopifnot(
+  identical(names(gapminder), c("country", "continent", "year",
+                                "lifeExp", "pop", "gdpPercap")),
+  n_distinct(gapminder$country) == 142L,
+  n_distinct(gapminder$continent) == 5L,
+  identical(sort(unique(as.integer(gapminder$year))), 1952:2025),
+  !anyDuplicated(gapminder[c("country", "year")])
+)
+
+knitr::kable(
+  gapminder |>
+    filter(country == "Afghanistan", year %in% c(1952, 1953, 2024, 2025)),
+  digits = 2, caption = "Annual Gapminder sample: selected rows from 1952–2025"
+)
+```
+
+# 1. Computing life expectancy for a continent
+
+To aggregate the data for each country, we assign each country a weight that is inversely proportional to its population. For continent $C$ and year $t$:
+
+$$
+\boxed{LE_{C,t}=\frac{\sum_{i\in C}lifeExp_{i,t}\,pop_{i,t}}
+{\sum_{i\in C}pop_{i,t}}}
+$$
+
+Therefore, a country with a larger population accounts for a larger share of the continent's total population. In R, we use `weighted.mean(lifeExp, w = pop)`.
+
+# 2. Life expectancy across continents
+
+```{r continent-calculation}
+valid_data <- gapminder |>
+  filter(is.finite(lifeExp), is.finite(pop), pop > 0)
+
+continent_le <- valid_data |>
+  group_by(continent, year) |>
+  summarise(lifeExp = weighted.mean(lifeExp, w = pop), .groups = "drop")
+
+stopifnot(nrow(continent_le) == 5L * 74L)
+```
+
+```{r continent-plot, fig.cap="Population-weighted life expectancy by continent, 1952–2025."}
+ggplot(continent_le, aes(year, lifeExp, color = continent)) +
+  geom_line(linewidth = 1.1) +
+  scale_x_continuous(breaks = c(seq(1952, 2022, 10), 2025)) +
+  labs(title = "Life expectancy by continent (1952–2025)",
+       x = "Year", y = "Life expectancy at birth (years)",
+       color = "Continent") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+```{r continent-comparison}
+comparison <- continent_le |>
+  filter(year %in% c(1952, 2025)) |>
+  pivot_wider(names_from = year, values_from = lifeExp, names_prefix = "LE_") |>
+  mutate(change = LE_2025 - LE_1952) |>
+  arrange(desc(change))
+
+knitr::kable(comparison, digits = 2,
+  col.names = c("Continent", "1952 (years)", "2025 (years)", "Change (years)"),
+  caption = "Change in population-weighted life expectancy, 1952–2025")
+```
+
+Every continent in the sample has gained years of life expectancy, but not at the same pace.
+The average life expectancy has increased on all continents studied, although the rate of increase varies.
+**`r as.character(comparison$continent[1])`**  and **`r as.character(comparison$continent[2])`**  shows the largest increase  respectively (**`r sprintf("%.2f", comparison$change[1])` years**),  (**`r sprintf("%.2f", comparison$change[2])` years**) . America and Europe  increase their pace for  + 18y, and +17y, Instead Oceania is last,  even having the  highest seniority 83,5y.
+
+# 3. Life expectancy worldwide
+
+For the global series, we weight **all countries directly** by population instead of averaging the five continents.
+
+$$
+\boxed{LE_{world,t}=\frac{\sum_i lifeExp_{i,t}\,pop_{i,t}}
+{\sum_i pop_{i,t}}}
+$$
+
+
+
+```{r world-calculation}
+world_le <- valid_data |>
+  group_by(year) |>
+  summarise(lifeExp = weighted.mean(lifeExp, w = pop), .groups = "drop") |>
+  arrange(year)
+
+stopifnot(nrow(world_le) == 74L)
+knitr::kable(
+  world_le |> filter(year %in% c(1952, 1960, 1970, 1980, 1990, 2000, 2010, 2019, 2020, 2021, 2025)),
+  digits = 2, caption = "World life expectancy in selected years")
+```
+
+## Six historical periods on the world chart
+
+
+The colored sections help readers follow the timeline, from postwar reconstruction through the pandemic and its consequences. The captions provide historical context.
+
+```{r historical-periods}
+periods <- tibble(
+  period = c(
+    "Post-war reconstruction and economic boom (1952–1965)",
+    "Decolonization and early health transitions (1966–1979)",
+    "Globalization and emerging economies (1980–1999)",
+    "New millennium, new economy and digital age (2000–2009)",
+    "Post-crisis recovery and communication transformation (2010–2019)",
+    "Global pandemic shock (2020–2021)",
+    "AI era (2022–2025)"
+  ),
+  start = c(1951.5, 1965.5, 1979.5, 1999.5, 2009.5, 2019.5, 2021.5),
+  end   = c(1965.5, 1979.5, 1999.5, 2009.5, 2019.5, 2021.5, 2025.5),
+  short_label = c(
+    "Post-war boom\n1952–65",
+    "Decolonization\n1966–79",
+    "Globalization\n1980–99",
+    "Digital age\n2000–09",
+    "Post-crisis\n2010–19",
+    "COVID-19\n2020–21",
+    "AI era\n2022–25"
+  )
+) |>
+  mutate(
+    period = factor(period, levels = period),
+    mid = (start + end) / 2
+  )
+
+period_colors <- setNames(
+  c("#DAEAF7", "#E2EDDE", "#EEE5F5", "#FBE9D6",
+    "#DAECEB", "#F1C3B8", "#D8D6F3"),
+  levels(periods$period)
+)
+
+world_ymin <- min(world_le$lifeExp, na.rm = TRUE) - 3
+world_ymax <- max(world_le$lifeExp, na.rm = TRUE) + 10
+periods <- periods |>
+  mutate(label_y = if_else(row_number() <= 5L,
+                           world_ymax - 2, world_ymax - 4))
+```
+
+```{r world-seven-bands, fig.width=13.5, fig.height=6.5, out.width='100%', fig.path='fig/', dev='png', dpi=110, fig.cap='Population-weighted life expectancy in the 142-country sample. Background colours show seven historical periods.'}
+ggplot(world_le, aes(year, lifeExp)) +
+  geom_rect(
+    data = periods,
+    aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf, fill = period),
+    inherit.aes = FALSE, alpha = 0.72, colour = NA
+  ) +
+  geom_vline(xintercept = periods$end[-nrow(periods)],
+             colour = "white", linewidth = 0.6) +
+  geom_line(colour = "#163F61", linewidth = 1.25) +
+  geom_point(data = world_le |> filter(year %in% c(1952, 2025)),
+             colour = "#163F61", size = 2.1) +
+  # Horizontal labels fit inside the five longer periods.
+  geom_text(
+    data = periods |> slice(1:5),
+    aes(x = mid, y = label_y, label = short_label),
+    inherit.aes = FALSE, size = 2.9, colour = "#27333F",
+    fontface = "bold", lineheight = 0.93
+  ) +
+  # Rotating these two short labels prevents overlap at the right edge.
+  geom_text(
+    data = periods |> slice(6:7),
+    aes(x = mid, y = label_y, label = short_label),
+    inherit.aes = FALSE, angle = 90, size = 2.4,
+    colour = "#27333F", fontface = "bold", lineheight = 0.9
+  ) +
+  scale_fill_manual(values = period_colors, guide = "none") +
+  scale_x_continuous(breaks = c(1952, 1965, 1979, 1999, 2009, 2019, 2025)) +
+  coord_cartesian(xlim = c(1951.5, 2025.5),
+                  ylim = c(world_ymin, world_ymax), expand = FALSE) +
+  labs(
+    title = "World life expectancy: seven historical phases (1952–2025)",
+    subtitle = "Population-weighted observations; colours indicate historical periods",
+    x = "Year", y = "Life expectancy at birth (years)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        plot.margin = margin(12, 12, 12, 12))
+```
+
+The world series rises from **`r sprintf("%.2f", world_le$lifeExp[world_le$year == 1952])` years** in 1952 to **`r sprintf("%.2f", world_le$lifeExp[world_le$year == 2025])` years** in 2025.  We barely see the LifeExp  has grew trought nations, however we notice some decline in the post war boom and  a little in the Pandemic Problem.
+This shows us that living trought time evolves  our  anciennety on Earth.
+
+
+
+# Conclusions
+
+Across the countries in the sample, population-weighted world life expectancy increased by **`r sprintf("%.2f", world_le$lifeExp[world_le$year == 2025] - world_le$lifeExp[world_le$year == 1952])` years** between 1952 and 2025.
+Growth has occurred in all continents, although the nature of that growth has varied. Six historical periods allow us to connect this phenomenon to changes in human and economic life. This shows us that the mere fact of long-term existence indicates that life here on Earth is constantly changing.
+
